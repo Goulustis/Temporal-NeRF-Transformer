@@ -44,9 +44,6 @@ class ScalarParams:
   background_noise_std: float = 0.001
   hyper_reg_loss_weight: float = 0.0
 
-  # eventHyperNerf loss hyperparams
-  event_loss_weight: float = 1.0
-  rgb_loss_weight: float = 1.0
 
 def save_checkpoint(path, state, keep=2):
   """Save the state to a checkpoint."""
@@ -214,58 +211,28 @@ def train_step(model: models.NerfModel,
     new_state: model_utils.TrainState, new training state.
     stats: list. [(loss, psnr), (loss_coarse, psnr_coarse)].
   """
-  # rng_key, fine_key, coarse_key, reg_key = random.split(rng_key, 4)
-  rng_key, fk_prev, ck_prev, \
-           fk_next, ck_next, \
-           fk_col, ck_col, reg_key = random.split(rng_key, 8)
+  rng_key, fine_key, coarse_key, reg_key = random.split(rng_key, 4)
 
   # pylint: disable=unused-argument
   def _compute_loss_and_stats(
-      params, prev_out, next_out, rgb_out,
-      level,
+      params, model_out, level,
       use_elastic_loss=False,
       use_hyper_reg_loss=False):
-    
-    def to_gray(img):
-      c2g_vec = jnp.array([0.2989 , 0.5870 , 0.1140 ]).reshape(-1,1)
-      grey_img = img@c2g_vec
-      return grey_img
 
-    stats = {}
-    loss = 0
-
-    if not "None" in prev_out:
-      rgb_next = next_out['rgb'][..., :3]
-      rgb_prev = prev_out['rgb'][..., :3]
-
-      if rgb_next.shape[-1] == 3:
-        rgb_prev, rgb_next = to_gray(rgb_prev), to_gray(rgb_next)
-      
-      # delta_log = jnp.log(rgb_next) - jnp.log(rgb_prev)
-      # e_t = batch["events"][..., :3]
-      # c_thresh = 0.075
-      # event_loss = jax.nn.relu(delta_log - e_t - c_thresh)**2 + \
-      #              jax.nn.relu(e_t - delta_log - c_thresh)**2
-
-      # event_loss = scalar_params.event_loss_weight * event_loss.mean()
-
-      event_loss = scalar_params.event_loss_weight*\
-                      ((jnp.log(rgb_next + 1e-7) - \
-                      jnp.log(rgb_prev + 1e-7) - batch['evs_data']['evs'][..., :3])**2).mean()
-
-      stats["loss/event"] = event_loss
-      loss = loss + event_loss
-
-    if not "None" in rgb_out:
-      rgb_target = batch['col_data']['rgb'][..., :3]
-      rgb_curr = rgb_out['rgb'][..., :3]
-      assert rgb_curr.shape[-1] == rgb_target.shape[-1], \
-              "model and image channel different; model:%s, img:%s"%(rgb_curr.shape[-1], rgb_target.shape[-1])
-      rgb_loss_raw = ((rgb_curr - rgb_target)**2).mean()
-      rgb_curr_loss = scalar_params.rgb_loss_weight*rgb_loss_raw
-      stats["loss/rgb"] = rgb_curr_loss
-      loss = loss + rgb_curr_loss
-
+    if 'channel_set' in batch['metadata']:
+      num_sets = int(model_out['rgb'].shape[-1] / 3)
+      losses = []
+      for i in range(num_sets):
+        loss = (model_out['rgb'][..., i * 3:(i + 1) * 3] - batch['rgb'])**2
+        loss *= (batch['metadata']['channel_set'] == i)
+        losses.append(loss)
+      rgb_loss = jnp.sum(jnp.asarray(losses), axis=0).mean()
+    else:
+      rgb_loss = ((model_out['rgb'][..., :3] - batch['rgb'][..., :3])**2).mean()
+    stats = {
+        'loss/rgb': rgb_loss,
+    }
+    loss = rgb_loss
     if use_elastic_loss:
       elastic_fn = functools.partial(compute_elastic_loss,
                                      loss_type=elastic_loss_type)
@@ -289,40 +256,34 @@ def train_step(model: models.NerfModel,
       loss += scalar_params.elastic_loss_weight * elastic_loss
 
     if use_warp_reg_loss:
-      def calc_warp_reg_loss(model_out):
-        weights = lax.stop_gradient(model_out['weights'])
-        depth_indices = model_utils.compute_depth_index(weights)
-        warp_mag = ((model_out['points']
-                    - model_out['warped_points'][..., :3]) ** 2).sum(axis=-1)
-        warp_reg_residual = jnp.take_along_axis(
-            warp_mag, depth_indices[..., None], axis=-1)
-        warp_reg_loss = utils.general_loss_with_squared_residual(
-            warp_reg_residual,
-            alpha=scalar_params.warp_reg_loss_alpha,
-            scale=scalar_params.warp_reg_loss_scale).mean()
-        stats['loss/warp_reg'] = warp_reg_loss
-        stats['residual/warp_reg'] = jnp.mean(jnp.sqrt(warp_reg_residual))
-        return warp_reg_loss
-      # loss += scalar_params.warp_reg_loss_weight * warp_reg_loss
-      loss += scalar_params.warp_reg_loss_weight * (calc_warp_reg_loss(prev_out) + calc_warp_reg_loss(next_out))/2
+      weights = lax.stop_gradient(model_out['weights'])
+      depth_indices = model_utils.compute_depth_index(weights)
+      warp_mag = ((model_out['points']
+                   - model_out['warped_points'][..., :3]) ** 2).sum(axis=-1)
+      warp_reg_residual = jnp.take_along_axis(
+          warp_mag, depth_indices[..., None], axis=-1)
+      warp_reg_loss = utils.general_loss_with_squared_residual(
+          warp_reg_residual,
+          alpha=scalar_params.warp_reg_loss_alpha,
+          scale=scalar_params.warp_reg_loss_scale).mean()
+      stats['loss/warp_reg'] = warp_reg_loss
+      stats['residual/warp_reg'] = jnp.mean(jnp.sqrt(warp_reg_residual))
+      loss += scalar_params.warp_reg_loss_weight * warp_reg_loss
 
     if use_hyper_reg_loss:
-      def calc_hyper_reg_loss(model_out):
-        weights = lax.stop_gradient(model_out['weights'])
-        hyper_points = model_out['warped_points'][..., 3:]
-        hyper_reg_residual = (hyper_points ** 2).sum(axis=-1)
-        hyper_reg_loss = utils.general_loss_with_squared_residual(
-            hyper_reg_residual, alpha=0.0, scale=0.05)
-        assert weights.shape == hyper_reg_loss.shape
-        hyper_reg_loss = (weights * hyper_reg_loss).sum(axis=1).mean()
-        stats['loss/hyper_reg'] = hyper_reg_loss
-        stats['residual/hyper_reg'] = jnp.mean(jnp.sqrt(hyper_reg_residual))
-        return hyper_reg_loss
-      # loss += scalar_params.hyper_reg_loss_weight * hyper_reg_loss
-      loss += scalar_params.hyper_reg_loss_weight * (calc_hyper_reg_loss(prev_out) + calc_hyper_reg_loss(next_out))/2
+      weights = lax.stop_gradient(model_out['weights'])
+      hyper_points = model_out['warped_points'][..., 3:]
+      hyper_reg_residual = (hyper_points ** 2).sum(axis=-1)
+      hyper_reg_loss = utils.general_loss_with_squared_residual(
+          hyper_reg_residual, alpha=0.0, scale=0.05)
+      assert weights.shape == hyper_reg_loss.shape
+      hyper_reg_loss = (weights * hyper_reg_loss).sum(axis=1).mean()
+      stats['loss/hyper_reg'] = hyper_reg_loss
+      stats['residual/hyper_reg'] = jnp.mean(jnp.sqrt(hyper_reg_residual))
+      loss += scalar_params.hyper_reg_loss_weight * hyper_reg_loss
 
-    if 'warp_jacobian' in prev_out:
-      jacobian = prev_out['warp_jacobian']
+    if 'warp_jacobian' in model_out:
+      jacobian = model_out['warp_jacobian']
       jacobian_det = jnp.linalg.det(jacobian)
       jacobian_div = utils.jacobian_to_div(jacobian)
       jacobian_curl = utils.jacobian_to_curl(jacobian)
@@ -332,42 +293,29 @@ def train_step(model: models.NerfModel,
           jnp.linalg.norm(jacobian_curl, axis=-1))
 
     stats['loss/total'] = loss
-    if not "None" in rgb_out:
-      stats['metric/psnr'] = utils.compute_psnr(rgb_loss_raw)
-      
+    stats['metric/psnr'] = utils.compute_psnr(rgb_loss)
     return loss, stats
-  
-  def _loss_fn(params):
-    col_batch, evs_batch = batch.get("col_data"), batch.get("evs_data")
-    ret_col = ret_prev = ret_next = {"fine":{"None" : None},
-                                     "coarse":{"None" : None}}
-    forward_fnc = lambda d_batch, fk, ck :model.apply({'params': params['model']},
-                                              d_batch,
-                                              extra_params=state.extra_params,
-                                              return_points=(use_warp_reg_loss or use_hyper_reg_loss),
-                                              return_weights=(use_warp_reg_loss or use_elastic_loss),
-                                              return_warp_jacobian=use_elastic_loss,
-                                              rngs={
-                                                  'fine': fk,
-                                                  'coarse': ck
-                                              })
 
-    if col_batch is not None:
-      ret_col = forward_fnc(col_batch, fk_col, ck_col)
-    
-    if evs_batch is not None:
-      ret_prev = forward_fnc(evs_batch["prev_data"], fk_prev, ck_prev)
-      ret_next = forward_fnc(evs_batch["next_data"], fk_next, ck_next)
+  def _loss_fn(params):
+    ret = model.apply({'params': params['model']},
+                      batch,
+                      extra_params=state.extra_params,
+                      return_points=(use_warp_reg_loss or use_hyper_reg_loss),
+                      return_weights=(use_warp_reg_loss or use_elastic_loss),
+                      return_warp_jacobian=use_elastic_loss,
+                      rngs={
+                          'fine': fine_key,
+                          'coarse': coarse_key
+                      })
 
     losses = {}
     stats = {}
-    cond_fn = lambda key : (key in ret_col) or (key in ret_prev)
-    if cond_fn("fine"):
+    if 'fine' in ret:
       losses['fine'], stats['fine'] = _compute_loss_and_stats(
-          params, ret_prev['fine'], ret_next['fine'], ret_col['fine'], 'fine')
-    if cond_fn('coarse'):
+          params, ret['fine'], 'fine')
+    if 'coarse' in ret:
       losses['coarse'], stats['coarse'] = _compute_loss_and_stats(
-          params, ret_prev['coarse'],ret_next['coarse'],ret_col['coarse'], 'coarse',
+          params, ret['coarse'], 'coarse',
           use_elastic_loss=use_elastic_loss,
           use_hyper_reg_loss=use_hyper_reg_loss)
 
@@ -384,7 +332,6 @@ def train_step(model: models.NerfModel,
           scalar_params.background_loss_weight * background_loss)
       stats['background_loss'] = background_loss
 
-    ret = ret_next if evs_batch is not None else ret_col
     return sum(losses.values()), (stats, ret)
 
   optimizer = state.optimizer

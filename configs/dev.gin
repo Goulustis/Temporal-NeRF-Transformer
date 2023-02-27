@@ -4,8 +4,8 @@ max_steps = 250000
 lr_decay_steps = %max_steps
 
 image_scale = 2
-batch_size = 2048
-eval_batch_size = 32
+batch_size = 1024
+eval_batch_size = 8124
 init_lr = 0.001
 final_lr = 0.0001
 elastic_init_weight = 0.001
@@ -13,12 +13,7 @@ TrainConfig.lr_schedule = %DEFAULT_LR_SCHEDULE
 
 
 # Experiment Configs
-# ExperimentConfig.datasource_cls = @EviesDataSource 
 ExperimentConfig.datasource_cls=@ColcamDataSource
-# ExperimentConfig.datasource_cls=@EcamDataSource
-# ExperimentConfig.datasource_cls = @NerfiesDataSource
-# EcamDataSource.data_dir=%data_dir
-# EcamDataSource.image_scale=%image_scale
 
 # Basic model config.
 NerfModel.nerf_trunk_width = 256
@@ -87,11 +82,6 @@ TrainConfig.print_every = 20
 TrainConfig.log_every = 10
 TrainConfig.histogram_every = 1000
 TrainConfig.save_every = 10000
-
-# DyNeRF config
-TrainConfig.rgb_frac=1
-TrainConfig.event_loss_weight = 1.0
-TrainConfig.rgb_loss_weight = 5.0
 
 EvalConfig.num_val_eval = None
 EvalConfig.num_train_eval = None

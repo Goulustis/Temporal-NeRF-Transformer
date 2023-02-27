@@ -17,16 +17,11 @@ from torch.utils.data import DataLoader
 from hypernerf import camera as cam
 from hypernerf import utils
 from hypernerf.datasets.nerfies import NerfiesDataSource, _load_image
-from hypernerf.datasets.cameraDataset import EcamDataset, ColcamDataset
+from hypernerf.datasets.cameraDataset import ColcamDataset
 
-
-# TODO: plan:
-# throw away the last event image
-# on rgb side, keep last trigger img so that [r,e,r,e]
-                                                   #^ that's thrown away 
 
 @gin.configurable
-class EcamDataSource(NerfiesDataSource):
+class ColcamDataSource(NerfiesDataSource):
     """
     Data loader for event camera dataset
     """
@@ -44,8 +39,8 @@ class EcamDataSource(NerfiesDataSource):
         self.cache_dir = self.data_dir/"cache"/f"{image_scale}x"
         
 
-    def load_rgb(self, item_id):
-        return None
+    def load_rgb(self, item_id: str) -> np.ndarray:
+        return _load_image(self.rgb_dir / f'{item_id}.png').astype(np.float16)
     
     def get_time(self, item_id):
         return self.metadata_dict[item_id]["t"]
@@ -114,8 +109,8 @@ class EcamDataSource(NerfiesDataSource):
         return data_dict
 
     def _get_idx_cond(self, idxs):
-        all_ids = np.array(self.all_ids)[:-1]
-        cond = np.zeros(len(all_ids), dtype=np.bool)
+        cond = np.zeros(len(self.all_ids), dtype=np.bool)
+        all_ids = np.array(self.all_ids)
 
         for idx in idxs:
             cond = cond | (all_ids == idx)
@@ -142,31 +137,17 @@ class EcamDataSource(NerfiesDataSource):
 
 
     def _create_preloaded_dataset(self, item_ids, flatten=False, shuffle=True, ret_dict=False):
-        """
-            Create a pyTorch Dataset
-        """
+        
         data_dict = self._load_data_dict()
         pixels = data_dict.pop("pixels")
 
-        prev_dict = jax.tree_map(lambda x : x[:-1], data_dict)
-        next_dict = jax.tree_map(lambda x : x[1:], data_dict)
-        eimgs = np.load(self.eimg_f)[:-1]  # drop the last one event image frame because the last frame happens at the last rgb frame
-        # eimgs = torch.from_numpy(eimgs)
-
         keep_cond = self._get_idx_cond(item_ids)
         filter_fn = lambda x : x[keep_cond]
-        prev_dict, next_dict = jax.tree_map(filter_fn, prev_dict), jax.tree_map(filter_fn, next_dict)
-        eimgs = eimgs[keep_cond]
+        data_dict = jax.tree_map(filter_fn, data_dict)
+        
+        data_dict["pixels"] = pixels
 
-        prev_dict["pixels"] = pixels
-        next_dict["pixels"] = pixels
-
-        return EcamDataset(eimgs, prev_dict, next_dict, 
-                           sample_non_zeros=True,
-                           data_dir=self.data_dir, 
-                           image_scale=self.image_scale, 
-                           shuffle=shuffle,
-                           flatten=flatten)
+        return ColcamDataset(data_dict, shuffle=shuffle, flatten=flatten)
 
     
     def iterator_from_dataset(self, 
@@ -202,43 +183,3 @@ class EcamDataSource(NerfiesDataSource):
             it = jax_utils.prefetch_to_device(it, prefetch_size, devices)
         
         return it
-
-
-@gin.configurable
-class ColcamDataSource(EcamDataSource):
-
-    def __init__(self,
-               data_dir: str = gin.REQUIRED,  # scene/ecam_set
-               image_scale: int = gin.REQUIRED,
-               shuffle_pixels: bool = False,
-               camera_type: str = 'json',
-               test_camera_trajectory: str = 'orbit-mild',
-               **kwargs):
-
-        super().__init__(data_dir, image_scale, shuffle_pixels, camera_type, test_camera_trajectory, **kwargs)
-        
-    
-    def _get_idx_cond(self, idxs):
-        cond = np.zeros(len(self.all_ids), dtype=np.bool)
-        all_ids = np.array(self.all_ids)
-
-        for idx in idxs:
-            cond = cond | (all_ids == idx)
-        
-        return cond
-
-    def load_rgb(self, item_id: str) -> np.ndarray:
-        return _load_image(self.rgb_dir / f'{item_id}.png').astype(np.float16)
-
-    def _create_preloaded_dataset(self, item_ids, flatten=False, shuffle=True, ret_dict=False):
-        
-        data_dict = self._load_data_dict()
-        pixels = data_dict.pop("pixels")
-
-        keep_cond = self._get_idx_cond(item_ids)
-        filter_fn = lambda x : x[keep_cond]
-        data_dict = jax.tree_map(filter_fn, data_dict)
-        
-        data_dict["pixels"] = pixels
-
-        return ColcamDataset(data_dict, shuffle=shuffle, flatten=flatten)
