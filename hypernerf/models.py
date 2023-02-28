@@ -156,6 +156,9 @@ class NerfModel(nn.Module):
   hyper_sheet_mlp_cls: Callable[..., nn.Module] = modules.HyperSheetMLP
   hyper_sheet_use_input_points: bool = True
 
+  # Latent Fusion configs
+  latent_fuser_cls: Callable[..., nn.Module] = modules.NNFuser
+
   # Warp configs.
   use_warp: bool = False
   warp_field_cls: Callable[..., nn.Module] = warping.SE3Field
@@ -263,6 +266,7 @@ class NerfModel(nn.Module):
       raise ValueError('Template metadata is enabled but none of the condition'
                        'branches are.')
 
+    # TODO: increase the number of embeddings
     if self.use_nerf_embed:
       self.nerf_embed = self.nerf_embed_cls(num_embeddings=self.num_nerf_embeds)
     if self.use_warp:
@@ -489,6 +493,8 @@ class NerfModel(nn.Module):
         warp_embed = self.warp_embed(warp_embed)
     else:
       warp_embed = None
+
+    # TODO: add relational embedding module
 
     # Create the hyper embedding.
     if self.has_hyper_embed:

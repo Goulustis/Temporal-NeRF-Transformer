@@ -223,6 +223,50 @@ class GLOEmbed(nn.Module):
 
 
 @gin.configurable(denylist=['name'])
+class PadEmbed(GLOEmbed):
+  """
+  GLO embedding with padding so that target frame embed is in the center
+  """
+  n_emb_per_frame: int = 7  # number of embeding use per frame
+  num_embeddings: int = gin.REQUIRED
+  num_dims: int = 16
+  embedding_init: types.Activation = nn.initializers.uniform(scale=0.05)
+
+  def setup(self):
+    assert self.n_emb_per_frame%2 == 1, "frame latent will not be at center"
+    n_embd = (self.n_emb_per_frame//2)*2 + self.num_embeddings
+    self.embed = nn.Embed(
+        num_embeddings=n_embd,
+        features=self.num_dims,
+        embedding_init=self.embedding_init)
+    
+    self.index_shift = self.n_emb_per_frame//2 + 1
+
+  def __call__(self, inputs: jnp.ndarray) -> jnp.ndarray:
+    """Method to get embeddings for specified indices.
+
+    Args:
+      inputs: The indices to fetch embeddings for.
+
+    Returns:
+      The embeddings corresponding to the indices provided.
+    """
+    if inputs.shape[-1] != 1:
+      inputs = inputs[...,None]
+
+    # if inputs.shape[-1] == 1:
+    inputs = inputs + self.index_shift
+    add_dims = [1 for _ in range(len(inputs.shape[:-1]))]
+    inputs = inputs + jnp.arange(-self.index_shift, self.index_shift).reshape(*add_dims, -1)
+    inputs = jnp.squeeze(inputs, axis=-1)
+    
+    embds = self.embed(inputs) 
+    self.sow("intermediate", "latents", embds)
+
+    return embds
+
+
+@gin.configurable(denylist=['name'])
 class HyperSheetMLP(nn.Module):
   """An MLP that defines a bendy slicing surface through hyper space."""
   output_channels: int = gin.REQUIRED
@@ -253,3 +297,13 @@ class HyperSheetMLP(nn.Module):
       return mlp(inputs) + embed
     else:
       return mlp(inputs)
+
+
+class NNFuser(nn.Module):
+
+  def setup(self):
+    pass
+
+  def __call__(self, latents):
+    latent_idx = latents.shape[-2]//2
+    return latents[...,latent_idx]

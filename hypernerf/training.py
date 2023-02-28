@@ -171,7 +171,8 @@ def compute_background_loss(model, state, params, key, points, noise_std,
                                     'elastic_loss_type',
                                     'use_background_loss',
                                     'use_warp_reg_loss',
-                                    'use_hyper_reg_loss'))
+                                    'use_hyper_reg_loss',
+                                    'enforce_near'))
 def train_step(model: models.NerfModel,
                rng_key: Callable[[int], jnp.ndarray],
                state: model_utils.TrainState,
@@ -185,7 +186,8 @@ def train_step(model: models.NerfModel,
                elastic_loss_type: str = 'log_svals',
                use_background_loss: bool = False,
                use_warp_reg_loss: bool = False,
-               use_hyper_reg_loss: bool = False):
+               use_hyper_reg_loss: bool = False,
+               enforce_near:bool = False):
   """One optimization step.
 
   Args:
@@ -217,7 +219,8 @@ def train_step(model: models.NerfModel,
   def _compute_loss_and_stats(
       params, model_out, level,
       use_elastic_loss=False,
-      use_hyper_reg_loss=False):
+      use_hyper_reg_loss=False,
+      latents=None):
 
     if 'channel_set' in batch['metadata']:
       num_sets = int(model_out['rgb'].shape[-1] / 3)
@@ -297,7 +300,9 @@ def train_step(model: models.NerfModel,
     return loss, stats
 
   def _loss_fn(params):
-    ret = model.apply({'params': params['model']},
+    latents = None
+    if enforce_near:
+      ret, feat = model.apply({'params': params['model']},
                       batch,
                       extra_params=state.extra_params,
                       return_points=(use_warp_reg_loss or use_hyper_reg_loss),
@@ -306,18 +311,31 @@ def train_step(model: models.NerfModel,
                       rngs={
                           'fine': fine_key,
                           'coarse': coarse_key
-                      })
+                      },
+                      mutable="intermediates")
+      latents = feat["intermediates"]["latents"]
+    else:
+      ret = model.apply({'params': params['model']},
+                        batch,
+                        extra_params=state.extra_params,
+                        return_points=(use_warp_reg_loss or use_hyper_reg_loss),
+                        return_weights=(use_warp_reg_loss or use_elastic_loss),
+                        return_warp_jacobian=use_elastic_loss,
+                        rngs={
+                            'fine': fine_key,
+                            'coarse': coarse_key
+                        })
 
     losses = {}
     stats = {}
     if 'fine' in ret:
       losses['fine'], stats['fine'] = _compute_loss_and_stats(
-          params, ret['fine'], 'fine')
+          params, ret['fine'], 'fine', latents=latents)
     if 'coarse' in ret:
       losses['coarse'], stats['coarse'] = _compute_loss_and_stats(
           params, ret['coarse'], 'coarse',
           use_elastic_loss=use_elastic_loss,
-          use_hyper_reg_loss=use_hyper_reg_loss)
+          use_hyper_reg_loss=use_hyper_reg_loss, latents=latents)
 
     if use_background_loss:
       background_loss = compute_background_loss(

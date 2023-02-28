@@ -40,7 +40,7 @@ NerfModel.hyper_point_max_deg = %hyper_point_max_deg
 
 TrainConfig.hyper_alpha_schedule = %DELAYED_HYPER_ALPHA_SCHED
 
-NerfModel.hyper_slice_method = 'axis_aligned_plane'
+NerfModel.hyper_slice_method = 'bendy_sheet'
 NerfModel.hyper_sheet_mlp_cls = @HyperSheetMLP
 NerfModel.hyper_use_warp_embed = True
 
@@ -78,8 +78,8 @@ TrainConfig.elastic_loss_weight_schedule = {
 }
 
 
-TrainConfig.print_every = 20
-TrainConfig.log_every = 10
+TrainConfig.print_every = 100
+TrainConfig.log_every = 100
 TrainConfig.histogram_every = 1000
 TrainConfig.save_every = 10000
 
