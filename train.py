@@ -289,6 +289,7 @@ def main(argv):
       use_background_loss=train_config.use_background_loss,
       use_warp_reg_loss=train_config.use_warp_reg_loss,
       use_hyper_reg_loss=train_config.use_hyper_reg_loss,
+      enforce_near=train_config.enforce_near
   )
   ptrain_step = jax.pmap(
       train_step,
