@@ -299,7 +299,7 @@ class HyperSheetMLP(nn.Module):
       return mlp(inputs)
 
 @gin.configurable(denylist=['name'])
-class NNFuser(nn.Module):
+class SelectFuser(nn.Module):
   """
   aggregate
   """

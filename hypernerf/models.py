@@ -158,7 +158,7 @@ class NerfModel(nn.Module):
 
   # Latent Fusion configs
   use_fusion: bool = False
-  fusion_cls: Callable[..., nn.Module] = modules.NNFuser
+  fusion_cls: Callable[..., nn.Module] = modules.SelectFuser
 
   # Warp configs.
   use_warp: bool = False
