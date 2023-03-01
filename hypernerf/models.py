@@ -157,7 +157,8 @@ class NerfModel(nn.Module):
   hyper_sheet_use_input_points: bool = True
 
   # Latent Fusion configs
-  latent_fuser_cls: Callable[..., nn.Module] = modules.NNFuser
+  use_fusion: bool = False
+  fusion_cls: Callable[..., nn.Module] = modules.NNFuser
 
   # Warp configs.
   use_warp: bool = False
@@ -269,8 +270,12 @@ class NerfModel(nn.Module):
     # TODO: increase the number of embeddings
     if self.use_nerf_embed:
       self.nerf_embed = self.nerf_embed_cls(num_embeddings=self.num_nerf_embeds)
+      if self.use_fusion:
+        self.nerf_embed_fuser = self.fusion_cls()
     if self.use_warp:
       self.warp_embed = self.warp_embed_cls(num_embeddings=self.num_warp_embeds)
+      if self.use_fusion:
+        self.warp_fuser = self.fusion_cls()
 
     if self.hyper_slice_method == 'axis_aligned_plane':
       self.hyper_embed = self.hyper_embed_cls(
@@ -280,6 +285,9 @@ class NerfModel(nn.Module):
         self.hyper_embed = self.hyper_embed_cls(
             num_embeddings=self.num_hyper_embeds)
       self.hyper_sheet_mlp = self.hyper_sheet_mlp_cls()
+    
+    if self.use_fusion:
+      self.hyper_fuser = self.fusion_cls()
 
     if self.use_warp:
       self.warp_field = self.warp_field_cls()
@@ -330,6 +338,8 @@ class NerfModel(nn.Module):
       else:
         nerf_embed = metadata[self.nerf_embed_key]
         nerf_embed = self.nerf_embed(nerf_embed)
+        if self.use_fusion:
+          nerf_embed = self.nerf_embed_fuser(nerf_embed)
       if self.use_alpha_condition:
         alpha_conditions.append(nerf_embed)
       if self.use_rgb_condition:
@@ -491,6 +501,9 @@ class NerfModel(nn.Module):
       else:
         warp_embed = metadata[self.warp_embed_key]
         warp_embed = self.warp_embed(warp_embed)
+      
+      if self.use_fusion:
+        warp_embed = self.warp_fuser(warp_embed)
     else:
       warp_embed = None
 
@@ -505,6 +518,9 @@ class NerfModel(nn.Module):
       else:
         hyper_embed = metadata[self.hyper_embed_key]
         hyper_embed = self.hyper_embed(hyper_embed)
+      
+      if self.use_fusion:
+        hyper_embed = self.hyper_fuser(hyper_embed)
     else:
       hyper_embed = None
 
