@@ -298,12 +298,22 @@ class HyperSheetMLP(nn.Module):
     else:
       return mlp(inputs)
 
-
+@gin.configurable(denylist=['name'])
 class NNFuser(nn.Module):
-
+  """
+  aggregate
+  """
   def setup(self):
     pass
 
   def __call__(self, latents):
     latent_idx = latents.shape[-2]//2
     return latents[...,latent_idx]
+
+@gin.configurable(denylist=['name'])  
+class MeanFuser(nn.Module):
+  def setup(self):
+    pass
+
+  def __call__(self, latents):
+    return jnp.mean(latents, axis=-2)
