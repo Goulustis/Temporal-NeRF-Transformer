@@ -46,6 +46,10 @@ class ScalarParams:
 
   near_const_weight: float = 1.0
 
+  # TNT configs
+  rgb_weight: float = 1.0
+  near_loss_weight:float = 1.0
+
 
 def save_checkpoint(path, state, keep=2):
   """Save the state to a checkpoint."""
@@ -258,7 +262,7 @@ def train_step(model: models.NerfModel,
     loss = rgb_loss
 
     if enforce_near and (latents is not None):
-      near_loss = scalar_params.near_const_weight*compute_near_constraints(latents)
+      near_loss = scalar_params.near_loss_weight*compute_near_constraints(latents)
       stats["loss/near_loss"] = near_loss
       loss += near_loss
 

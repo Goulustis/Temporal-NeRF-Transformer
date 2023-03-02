@@ -267,7 +267,9 @@ def main(argv):
       warp_reg_loss_alpha=train_config.warp_reg_loss_alpha,
       warp_reg_loss_scale=train_config.warp_reg_loss_scale,
       background_loss_weight=train_config.background_loss_weight,
-      hyper_reg_loss_weight=train_config.hyper_reg_loss_weight)
+      hyper_reg_loss_weight=train_config.hyper_reg_loss_weight,
+      rgb_weight=train_config.rgb_weight,
+      near_const_weight=train_config.near_loss_weight)
   state = checkpoints.restore_checkpoint(checkpoint_dir, state)
   init_step = state.optimizer.state.step + 1
   state = jax_utils.replicate(state, devices=devices)
