@@ -271,11 +271,11 @@ class NerfModel(nn.Module):
     if self.use_nerf_embed:
       self.nerf_embed = self.nerf_embed_cls(num_embeddings=self.num_nerf_embeds)
       if self.use_fusion:
-        self.nerf_embed_fuser = self.fusion_cls()
+        self.nerf_embd_fuser = self.fusion_cls()#(name="nerf_embd_fuser")
     if self.use_warp:
       self.warp_embed = self.warp_embed_cls(num_embeddings=self.num_warp_embeds)
       if self.use_fusion:
-        self.warp_fuser = self.fusion_cls()
+        self.warp_fuser = self.fusion_cls()#(name="warp_fuser")
 
     if self.hyper_slice_method == 'axis_aligned_plane':
       self.hyper_embed = self.hyper_embed_cls(
@@ -287,7 +287,7 @@ class NerfModel(nn.Module):
       self.hyper_sheet_mlp = self.hyper_sheet_mlp_cls()
     
     if self.use_fusion:
-      self.hyper_fuser = self.fusion_cls()
+      self.hyper_fuser = self.fusion_cls()#(name="hyper_fuser")
 
     if self.use_warp:
       self.warp_field = self.warp_field_cls()
@@ -339,7 +339,7 @@ class NerfModel(nn.Module):
         nerf_embed = metadata[self.nerf_embed_key]
         nerf_embed = self.nerf_embed(nerf_embed)
         if self.use_fusion:
-          nerf_embed = self.nerf_embed_fuser(nerf_embed)
+          nerf_embed = self.nerf_embd_fuser(nerf_embed)
       if self.use_alpha_condition:
         alpha_conditions.append(nerf_embed)
       if self.use_rgb_condition:
@@ -501,11 +501,9 @@ class NerfModel(nn.Module):
       else:
         warp_embed = metadata[self.warp_embed_key]
         warp_embed = self.warp_embed(warp_embed)
-      
-      if self.use_fusion:
-        warp_embed = self.warp_fuser(warp_embed)
     else:
       warp_embed = None
+    
 
     # TODO: add relational embedding module
 
@@ -518,11 +516,15 @@ class NerfModel(nn.Module):
       else:
         hyper_embed = metadata[self.hyper_embed_key]
         hyper_embed = self.hyper_embed(hyper_embed)
-      
-      if self.use_fusion:
-        hyper_embed = self.hyper_fuser(hyper_embed)
     else:
       hyper_embed = None
+    
+    if self.use_fusion:
+      if warp_embed is not None:
+        warp_embed = self.warp_fuser(warp_embed)
+      
+      if hyper_embed is not None:
+        hyper_embed = self.hyper_fuser(hyper_embed)
 
     # Broadcast embeddings.
     if warp_embed is not None:

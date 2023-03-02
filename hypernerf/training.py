@@ -146,10 +146,20 @@ def compute_elastic_loss(jacobian, eps=1e-6, loss_type='log_svals'):
   return loss, residual
 
 def compute_near_constraints(latents):
-  l2_dist = ((latents[..., None] - jnp.expand_dims(jnp.moveaxis(latents, -1, -2), axis = -3))**2).sum(axis=-2)
-  keep_shape = l2_dist.shape[:-2]
-  l2_dist = jnp.sqrt(l2_dist).reshape(*keep_shape, -1)
-  return l2_dist
+  def calc_l2(latents):
+    l2_dist = ((latents[..., None] - jnp.expand_dims(jnp.moveaxis(latents, -1, -2), axis = -3))**2).sum(axis=-2)
+    keep_shape = l2_dist.shape[:-2]
+    l2_dist = l2_dist.reshape(*keep_shape, -1).sum(axis=-1).mean()
+    return l2_dist
+
+  l2_tot = 0
+  if type(latents) != tuple:
+    l2_tot = calc_l2(latents)
+  else:
+    for latent in latents:
+      l2_tot += calc_l2(latent)
+  
+  return l2_tot
 
 
 
@@ -248,7 +258,9 @@ def train_step(model: models.NerfModel,
     loss = rgb_loss
 
     if enforce_near and (latents is not None):
-      loss += scalar_params.near_const_weight*compute_near_constraints(latents)
+      near_loss = scalar_params.near_const_weight*compute_near_constraints(latents)
+      stats["loss/near_loss"] = near_loss
+      loss += near_loss
 
     if use_elastic_loss:
       elastic_fn = functools.partial(compute_elastic_loss,
@@ -327,7 +339,7 @@ def train_step(model: models.NerfModel,
                           'coarse': coarse_key
                       },
                       mutable="intermediates")
-      latents = feat["intermediates"]["latents"]
+      latents = feat["intermediates"]["warp_embed"]["latents"]
     else:
       ret = model.apply({'params': params['model']},
                         batch,

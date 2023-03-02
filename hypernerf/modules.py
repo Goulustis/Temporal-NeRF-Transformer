@@ -234,7 +234,7 @@ class PadEmbed(GLOEmbed):
 
   def setup(self):
     assert self.n_emb_per_frame%2 == 1, "frame latent will not be at center"
-    n_embd = (self.n_emb_per_frame//2)*2 + self.num_embeddings
+    n_embd = (self.n_emb_per_frame//2)*2 + self.num_embeddings + 1
     self.embed = nn.Embed(
         num_embeddings=n_embd,
         features=self.num_dims,
@@ -257,11 +257,13 @@ class PadEmbed(GLOEmbed):
     # if inputs.shape[-1] == 1:
     inputs = inputs + self.index_shift
     add_dims = [1 for _ in range(len(inputs.shape[:-1]))]
-    inputs = inputs + jnp.arange(-self.index_shift, self.index_shift).reshape(*add_dims, -1)
-    inputs = jnp.squeeze(inputs, axis=-1)
+    inputs = inputs + jnp.arange(-self.index_shift + 1, self.index_shift).reshape(*add_dims, -1)
+
+    if inputs.shape[-1] == 1:
+      inputs = jnp.squeeze(inputs, axis=-1)
     
     embds = self.embed(inputs) 
-    self.sow("intermediate", "latents", embds)
+    self.sow("intermediates", "latents", embds)
 
     return embds
 
@@ -308,7 +310,7 @@ class SelectFuser(nn.Module):
 
   def __call__(self, latents):
     latent_idx = latents.shape[-2]//2
-    return latents[...,latent_idx]
+    return latents[:, latent_idx]
 
 @gin.configurable(denylist=['name'])  
 class MeanFuser(nn.Module):
