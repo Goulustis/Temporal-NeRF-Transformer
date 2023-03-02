@@ -44,6 +44,8 @@ class ScalarParams:
   background_noise_std: float = 0.001
   hyper_reg_loss_weight: float = 0.0
 
+  near_const_weight: float = 1.0
+
 
 def save_checkpoint(path, state, keep=2):
   """Save the state to a checkpoint."""
@@ -143,6 +145,24 @@ def compute_elastic_loss(jacobian, eps=1e-6, loss_type='log_svals'):
       sq_residual, alpha=-2.0, scale=0.03)
   return loss, residual
 
+def compute_near_constraints(latents):
+  def calc_l2(latents):
+    l2_dist = ((latents[..., None] - jnp.expand_dims(jnp.moveaxis(latents, -1, -2), axis = -3))**2).sum(axis=-2)
+    keep_shape = l2_dist.shape[:-2]
+    l2_dist = l2_dist.reshape(*keep_shape, -1).sum(axis=-1).mean()
+    return l2_dist
+
+  l2_tot = 0
+  if type(latents) != tuple:
+    l2_tot = calc_l2(latents)
+  else:
+    for latent in latents:
+      l2_tot += calc_l2(latent)
+  
+  return l2_tot
+
+
+
 
 @functools.partial(jax.jit, static_argnums=0)
 def compute_background_loss(model, state, params, key, points, noise_std,
@@ -236,6 +256,12 @@ def train_step(model: models.NerfModel,
         'loss/rgb': rgb_loss,
     }
     loss = rgb_loss
+
+    if enforce_near and (latents is not None):
+      near_loss = scalar_params.near_const_weight*compute_near_constraints(latents)
+      stats["loss/near_loss"] = near_loss
+      loss += near_loss
+
     if use_elastic_loss:
       elastic_fn = functools.partial(compute_elastic_loss,
                                      loss_type=elastic_loss_type)
@@ -313,7 +339,7 @@ def train_step(model: models.NerfModel,
                           'coarse': coarse_key
                       },
                       mutable="intermediates")
-      latents = feat["intermediates"]["latents"]
+      latents = feat["intermediates"]["warp_embed"]["latents"]
     else:
       ret = model.apply({'params': params['model']},
                         batch,

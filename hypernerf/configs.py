@@ -125,10 +125,8 @@ class TrainConfig:
   # How often to print to the console.
   print_every: int = 25
 
-  # DyNeRF configs
-  rgb_frac:float = 0.75
-  event_loss_weight:float = 1
-  rgb_loss_weight:float = 5
+  # TNTConfig
+  enforce_near: bool = False
 
   # Unused, here for backwards compatibility.
   use_curvature_loss: bool = False

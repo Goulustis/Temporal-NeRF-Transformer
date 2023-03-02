@@ -41,6 +41,9 @@ from hypernerf import schedules
 from hypernerf import training
 from hypernerf import utils
 
+# from jax.config import config
+# config.update("jax_debug_nans", True)
+
 flags.DEFINE_enum('mode', None, ['jax_cpu', 'jax_gpu', 'jax_tpu'],
                   'Distributed strategy approach.')
 
@@ -190,8 +193,7 @@ def main(argv):
           dummy_model.nerf_embed_key == 'appearance'
           or dummy_model.hyper_embed_key == 'appearance'),
       use_camera_id=dummy_model.nerf_embed_key == 'camera',
-      use_time=dummy_model.warp_embed_key == 'time',
-      rgb_frac=train_config.rgb_frac)
+      use_time=dummy_model.warp_embed_key == 'time')
 
   # Create Jax iterator.
   logging.info('Creating dataset iterator.')
@@ -289,6 +291,7 @@ def main(argv):
       use_background_loss=train_config.use_background_loss,
       use_warp_reg_loss=train_config.use_warp_reg_loss,
       use_hyper_reg_loss=train_config.use_hyper_reg_loss,
+      enforce_near=train_config.enforce_near
   )
   ptrain_step = jax.pmap(
       train_step,
