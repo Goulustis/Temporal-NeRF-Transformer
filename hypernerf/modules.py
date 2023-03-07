@@ -23,7 +23,7 @@ import jax.numpy as jnp
 
 from hypernerf import model_utils
 from hypernerf import types
-
+from transformer import TransformerEncoder, PositionalEncoding
 
 def get_norm_layer(norm_type):
   """Translates a norm type to a norm constructor."""
@@ -234,15 +234,23 @@ class PadEmbed(GLOEmbed):
 
   def setup(self):
     assert self.n_emb_per_frame%2 == 1, "frame latent will not be at center"
-    n_embd = (self.n_emb_per_frame//2)*2 + self.num_embeddings + 1
+    n_embd = (self.n_emb_per_frame//2)*2 + self.num_embeddings + 2  
     self.embed = nn.Embed(
         num_embeddings=n_embd,
         features=self.num_dims,
         embedding_init=self.embedding_init)
     
-    self.index_shift = self.n_emb_per_frame//2 + 1
+    self.index_shift = self.n_emb_per_frame//2 + 2 # add extra 1 so index = 0 is mask token
+    self.n_embd = n_embd
 
-  def __call__(self, inputs: jnp.ndarray) -> jnp.ndarray:
+  def __call__(self, inputs: jnp.ndarray, do_query:bool =False) -> jnp.ndarray:
+    
+    if do_query:
+      return self.query_mask(inputs)
+    else:
+      return self.get_embd(inputs)
+
+  def get_embd(self, inputs):
     """Method to get embeddings for specified indices.
 
     Args:
@@ -254,16 +262,56 @@ class PadEmbed(GLOEmbed):
     if inputs.shape[-1] != 1:
       inputs = inputs[...,None]
 
-    # if inputs.shape[-1] == 1:
     inputs = inputs + self.index_shift
     add_dims = [1 for _ in range(len(inputs.shape[:-1]))]
-    inputs = inputs + jnp.arange(-self.index_shift + 1, self.index_shift).reshape(*add_dims, -1)
+    shift_seq = jnp.arange(- self.n_emb_per_frame//2, 
+                                 self.n_emb_per_frame//2).reshape(*add_dims, -1)
+    inputs = inputs + shift_seq
 
+    # assert not (0 in inputs).all(), "mask should not be in call, fix the indexing!!"
     if inputs.shape[-1] == 1:
       inputs = jnp.squeeze(inputs, axis=-1)
     
     embds = self.embed(inputs) 
     self.sow("intermediates", "latents", embds)
+
+    return embds
+
+
+  def query_mask(self, inputs:jnp.ndarray) -> jnp.ndarray:
+    """Method to get embeddings for specified indices.
+
+    Args:
+      inputs: The indices to be masked
+
+    Returns:
+      index is masked in random intervals
+    """
+    if inputs.shape[-1] != 1:
+      inputs = inputs[...,None]
+
+    inputs = inputs + self.index_shift
+    add_dims = [1 for _ in range(len(inputs.shape[:-1]))]
+    shift_seq = jnp.arange(-self.n_emb_per_frame//2, 
+                                 self.n_emb_per_frame//2).reshape(*add_dims, -1)
+    input_seq = inputs + shift_seq
+
+    msk_inputs = input_seq + jax.random.randint(self.make_rng('coarse'), inputs.shape, minval=-self.n_emb_per_frame//2, 
+                                                                                       maxval= self.n_emb_per_frame//2)
+    
+    # make sure minimum is at least 1
+    msk_min = msk_inputs.min(axis= 1, keepdims=True)
+    inval_cond = (msk_min <= 0).squeeze()
+    msk_inputs = msk_inputs.at[inval_cond].set(msk_inputs[inval_cond] - msk_min[inval_cond] + 1)
+    # msk_inputs[inval_cond] = msk_inputs[inval_cond] - msk_min[inval_cond] + 1
+
+    # msk_inputs[msk_inputs == inputs] = 0 # mask embd index
+    msk_inputs = msk_inputs.at[msk_inputs == inputs].set(0) # mask embd index
+
+    if msk_inputs.shape[-1] == 1:
+      msk_inputs = jnp.squeeze(msk_inputs, axis=-1)
+    
+    embds = self.embed(msk_inputs) 
 
     return embds
 
@@ -308,7 +356,7 @@ class SelectFuser(nn.Module):
   def setup(self):
     pass
 
-  def __call__(self, latents):
+  def __call__(self, latents, metadata=None, do_query=False):
     latent_idx = latents.shape[-2]//2
     return latents[:, latent_idx]
 
@@ -317,5 +365,64 @@ class MeanFuser(nn.Module):
   def setup(self):
     pass
 
-  def __call__(self, latents):
+  def __call__(self, latents, metadata=None, do_query=False):
     return jnp.mean(latents, axis=-2)
+
+@gin.configurable(denylist=['name'])
+class TransformerFuser(nn.Module):
+    model_dim : int = 32                  # Hidden dimensionality to use inside the Transformer
+    num_heads : int = 4                 # Number of heads to use in the Multi-Head Attention blocks
+    num_layers : int = 3                # Number of encoder blocks to use
+
+    # NOTE: turn dropout prob to 0 during evaluation, passing in "train" is not easy
+    dropout_prob : float = 0.0        # Dropout to apply inside the model
+    input_dropout_prob : float = 0.0  # Dropout to apply on the input features;
+
+    def setup(self):
+        # Input dim -> Model dim
+        self.input_dropout = nn.Dropout(self.input_dropout_prob)
+        # self.input_layer = nn.Dense(self.model_dim)
+        # Positional encoding for sequences
+        self.positional_encoding = PositionalEncoding(self.model_dim)
+        # Transformer
+        self.transformer = TransformerEncoder(num_layers=self.num_layers,
+                                              input_dim=self.model_dim,
+                                              dim_feedforward=2*self.model_dim,
+                                              num_heads=self.num_heads,
+                                              dropout_prob=self.dropout_prob)
+
+
+    def __call__(self, x, metadata, do_query=False, mask=None, add_positional_encoding=True, train=True):
+        """
+        Inputs:
+            x - Input features of shape [Batch, SeqLen, input_dim]
+            mask - Mask to apply on the attention outputs (optional)
+            add_positional_encoding - If True, we add the positional encoding to the input.
+                                      Might not be desired for some tasks.
+            train - If True, dropout is stochastic
+        """
+        x = self.input_dropout(x, deterministic=not train)
+        # x = self.input_layer(x)
+        if add_positional_encoding:
+            x = self.positional_encoding(x)
+        x = self.transformer(x, mask=mask, train=train)
+
+        if (metadata is None) or (not do_query):
+          # return the center one
+          latent_idx = x.shape[-2]//2
+          return x[:, latent_idx]
+        else:
+          # return the ones enlisted by metadata
+          pass
+
+    def get_attention_maps(self, x, mask=None, add_positional_encoding=True, train=True):
+        """
+        Function for extracting the attention matrices of the whole Transformer for a single batch.
+        Input arguments same as the forward pass.
+        """
+        x = self.input_dropout(x, deterministic=not train)
+        x = self.input_layer(x)
+        if add_positional_encoding:
+            x = self.positional_encoding(x)
+        attention_maps = self.transformer.get_attention_maps(x, mask=mask, train=train)
+        return attention_maps
