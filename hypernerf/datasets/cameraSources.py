@@ -35,7 +35,6 @@ class ColcamDataSource(NerfiesDataSource):
 
         super().__init__(data_dir, image_scale, shuffle_pixels, camera_type, test_camera_trajectory, **kwargs)
 
-        self.eimg_f = self.data_dir/"eimgs"/f"eimgs_{image_scale}x.npy"
         self.cache_dir = self.data_dir/"cache"/f"{image_scale}x"
         self.query_frac = kwargs.get("query_frac") if kwargs.get("query_frac") is not None else 0
         
