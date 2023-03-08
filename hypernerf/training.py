@@ -46,6 +46,11 @@ class ScalarParams:
 
   near_const_weight: float = 1.0
 
+  # TNT configs
+  rgb_loss_weight: float = 1.0
+  near_loss_weight:float = 1.0
+  query_loss_weight:float = 1.0
+
 
 def save_checkpoint(path, state, keep=2):
   """Save the state to a checkpoint."""
@@ -237,12 +242,13 @@ def train_step(model: models.NerfModel,
 
   # pylint: disable=unused-argument
   def _compute_loss_and_stats(
-      params, model_out, level,
+      params, model_out, query_out, level,
       use_elastic_loss=False,
       use_hyper_reg_loss=False,
       latents=None):
 
-    if 'channel_set' in batch['metadata']:
+    # if 'channel_set' in batch['metadata']:
+    if False:
       num_sets = int(model_out['rgb'].shape[-1] / 3)
       losses = []
       for i in range(num_sets):
@@ -251,14 +257,19 @@ def train_step(model: models.NerfModel,
         losses.append(loss)
       rgb_loss = jnp.sum(jnp.asarray(losses), axis=0).mean()
     else:
-      rgb_loss = ((model_out['rgb'][..., :3] - batch['rgb'][..., :3])**2).mean()
+      rgb_loss = ((model_out['rgb'][..., :3] - batch['rgb_batch']['rgb'][..., :3])**2).mean()
     stats = {
         'loss/rgb': rgb_loss,
     }
     loss = rgb_loss
 
+    if batch.get("query_batch") is not None:
+      q_loss = ((query_out["rgb"] - batch["query_batch"]['rgb'])**2).mean()
+      loss += q_loss
+      stats["loss/q_loss"] = q_loss
+
     if enforce_near and (latents is not None):
-      near_loss = scalar_params.near_const_weight*compute_near_constraints(latents)
+      near_loss = scalar_params.near_loss_weight*compute_near_constraints(latents)
       stats["loss/near_loss"] = near_loss
       loss += near_loss
 
@@ -327,9 +338,11 @@ def train_step(model: models.NerfModel,
 
   def _loss_fn(params):
     latents = None
+    query_ret = None
+    rgb_batch, query_batch = batch.get("rgb_batch"), batch.get("query_batch")
     if enforce_near:
       ret, feat = model.apply({'params': params['model']},
-                      batch,
+                      rgb_batch,
                       extra_params=state.extra_params,
                       return_points=(use_warp_reg_loss or use_hyper_reg_loss),
                       return_weights=(use_warp_reg_loss or use_elastic_loss),
@@ -342,7 +355,7 @@ def train_step(model: models.NerfModel,
       latents = feat["intermediates"]["warp_embed"]["latents"]
     else:
       ret = model.apply({'params': params['model']},
-                        batch,
+                        rgb_batch,
                         extra_params=state.extra_params,
                         return_points=(use_warp_reg_loss or use_hyper_reg_loss),
                         return_weights=(use_warp_reg_loss or use_elastic_loss),
@@ -352,14 +365,28 @@ def train_step(model: models.NerfModel,
                             'coarse': coarse_key
                         })
 
+    if (query_batch is not None):
+      query_ret = model.apply({'params': params['model']},
+                        rgb_batch,
+                        extra_params=state.extra_params,
+                        return_points=(use_warp_reg_loss or use_hyper_reg_loss),
+                        return_weights=(use_warp_reg_loss or use_elastic_loss),
+                        return_warp_jacobian=use_elastic_loss,
+                        do_query=True,
+                        rngs={
+                            'fine': fine_key,
+                            'coarse': coarse_key
+                        })
+
+
     losses = {}
     stats = {}
     if 'fine' in ret:
       losses['fine'], stats['fine'] = _compute_loss_and_stats(
-          params, ret['fine'], 'fine', latents=latents)
+          params, ret['fine'], query_ret['fine'], 'fine', latents=latents)
     if 'coarse' in ret:
       losses['coarse'], stats['coarse'] = _compute_loss_and_stats(
-          params, ret['coarse'], 'coarse',
+          params, ret['coarse'], query_ret['coarse'], 'coarse',
           use_elastic_loss=use_elastic_loss,
           use_hyper_reg_loss=use_hyper_reg_loss, latents=latents)
 

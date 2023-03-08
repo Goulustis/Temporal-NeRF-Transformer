@@ -35,8 +35,8 @@ class ColcamDataSource(NerfiesDataSource):
 
         super().__init__(data_dir, image_scale, shuffle_pixels, camera_type, test_camera_trajectory, **kwargs)
 
-        self.eimg_f = self.data_dir/"eimgs"/f"eimgs_{image_scale}x.npy"
         self.cache_dir = self.data_dir/"cache"/f"{image_scale}x"
+        self.query_frac = kwargs.get("query_frac") if kwargs.get("query_frac") is not None else 0
         
 
     def load_rgb(self, item_id: str) -> np.ndarray:
@@ -164,20 +164,43 @@ class ColcamDataSource(NerfiesDataSource):
                         shuffle=False,
                         collate_fn = utils.tree_collate)
 
-        def _prepare_data_batched(xs):
-            devices = jax.local_devices()
-            _prepare = lambda x : x.reshape((len(devices), -1) + x.shape[1:])
+        # def _prepare_data_batched(xs):
+        #     devices = jax.local_devices()
+        #     _prepare = lambda x : x.reshape((len(devices), -1) + x.shape[1:])
 
-            return jax.tree_map(_prepare, xs)
+        #     return jax.tree_map(_prepare, xs)
         
-        def _prepare_data_unbatched(xs):
-            _prepare = lambda x : np.squeeze(x, axis=0)
-            return jax.tree_map(_prepare, xs)
+        # def _prepare_data_unbatched(xs):
+        #     _prepare = lambda x : np.squeeze(x, axis=0)
+        #     return jax.tree_map(_prepare, xs)
 
-        if batch_size > 0:
-            it = map(_prepare_data_batched, it)
-        else:
-            it = map(_prepare_data_unbatched, it)
+        # if batch_size > 0:
+        #     it = map(_prepare_data_batched, it)
+        # else:
+        #     it = map(_prepare_data_unbatched, it)
+
+        n_query = int(batch_size * self.query_frac)
+        def _prepare_data(xs):
+            devices = jax.local_devices()
+
+            if batch_size > 0:
+                _prepare = lambda x : x.reshape((len(devices), -1) + x.shape[1:])
+            else:
+                _prepare = lambda x : np.squeeze(x, axis=0)
+            
+            data_batch = {}
+            if self.query_frac > 0:
+                data_batch["rgb_batch"] = jax.tree_map(lambda x : x[n_query:], xs)
+                data_batch["query_batch"] = jax.tree_map(lambda x : x[:n_query], xs)
+                if xs.get("background_points") is not None:
+                    data_batch["background_points"] = xs["background_points"]
+            else:
+                data_batch["rgb_batch"] = xs
+            
+
+            return jax.tree_map(_prepare, data_batch)
+
+        it = map(_prepare_data, it)        
             
         if prefetch_size > 0:
             it = jax_utils.prefetch_to_device(it, prefetch_size, devices)
