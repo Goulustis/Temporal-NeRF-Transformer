@@ -388,7 +388,7 @@ def main(argv):
     time_tracker.tic('data', 'total')
 
   if train_config.max_steps % train_config.save_every != 0:
-    training.save_checkpoint(checkpoint_dir, state, keep=2)
+    training.save_checkpoint(checkpoint_dir, state, keep=50)
 
 
 if __name__ == '__main__':
