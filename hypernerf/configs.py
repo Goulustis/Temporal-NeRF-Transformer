@@ -127,8 +127,10 @@ class TrainConfig:
 
   # TNTConfig
   enforce_near: bool = False
-  rgb_weight:float = 1.0
+  rgb_loss_weight:float = 1.0
   near_loss_weight:float = 1.0
+  query_frac:float = 0.5
+  query_loss_weight:float = 1.0
 
   # Unused, here for backwards compatibility.
   use_curvature_loss: bool = False

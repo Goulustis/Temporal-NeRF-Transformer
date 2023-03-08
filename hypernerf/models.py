@@ -234,31 +234,41 @@ class NerfModel(nn.Module):
 
   def encode_hyper_embed(self, metadata):
     if self.hyper_slice_method == 'axis_aligned_plane':
-      # return self._encode_embed(metadata[self.hyper_embed_key],
-      #                           self.hyper_embed)
       if self.hyper_use_warp_embed:
-        return self._encode_embed(metadata[self.warp_embed_key],
+        hyper_emb= self._encode_embed(metadata[self.warp_embed_key],
                                   self.warp_embed)
       else:
-        return self._encode_embed(metadata[self.hyper_embed_key],
+        hyper_emb = self._encode_embed(metadata[self.hyper_embed_key],
                                   self.hyper_embed)
     elif self.hyper_slice_method == 'bendy_sheet':
       # The bendy sheet shares the metadata of the warp.
       if self.hyper_use_warp_embed:
-        return self._encode_embed(metadata[self.warp_embed_key],
+        hyper_emb = self._encode_embed(metadata[self.warp_embed_key],
                                   self.warp_embed)
       else:
-        return self._encode_embed(metadata[self.hyper_embed_key],
+        hyper_emb = self._encode_embed(metadata[self.hyper_embed_key],
                                   self.hyper_embed)
     else:
       raise RuntimeError(
           f'Unknown hyper slice method {self.hyper_slice_method}.')
 
+    if self.use_fusion:
+      hyper_emb = self.hyper_fuser(hyper_emb)
+    
+    return hyper_emb
+
   def encode_nerf_embed(self, metadata):
-    return self._encode_embed(metadata[self.nerf_embed_key], self.nerf_embed)
+    nerf_embd = self._encode_embed(metadata[self.nerf_embed_key], self.nerf_embed)
+    if self.use_fusion:
+      nerf_embd = self.nerf_embd_fuser(nerf_embd)
+    
+    return nerf_embd
 
   def encode_warp_embed(self, metadata):
-    return self._encode_embed(metadata[self.warp_embed_key], self.warp_embed)
+    warp_embd = self._encode_embed(metadata[self.warp_embed_key], self.warp_embed)
+    if self.use_fusion:
+      warp_embd = self.warp_fuser(warp_embd)
+    return warp_embd
 
   def setup(self):
     if (self.use_nerf_embed
@@ -267,15 +277,14 @@ class NerfModel(nn.Module):
       raise ValueError('Template metadata is enabled but none of the condition'
                        'branches are.')
 
-    # TODO: increase the number of embeddings
     if self.use_nerf_embed:
       self.nerf_embed = self.nerf_embed_cls(num_embeddings=self.num_nerf_embeds)
       if self.use_fusion:
-        self.nerf_embd_fuser = self.fusion_cls()#(name="nerf_embd_fuser")
+        self.nerf_embd_fuser = self.fusion_cls()
     if self.use_warp:
       self.warp_embed = self.warp_embed_cls(num_embeddings=self.num_warp_embeds)
       if self.use_fusion:
-        self.warp_fuser = self.fusion_cls()#(name="warp_fuser")
+        self.warp_fuser = self.fusion_cls()
 
     if self.hyper_slice_method == 'axis_aligned_plane':
       self.hyper_embed = self.hyper_embed_cls(
@@ -287,7 +296,7 @@ class NerfModel(nn.Module):
       self.hyper_sheet_mlp = self.hyper_sheet_mlp_cls()
     
     if self.use_fusion:
-      self.hyper_fuser = self.fusion_cls()#(name="hyper_fuser")
+      self.hyper_fuser = self.fusion_cls()
 
     if self.use_warp:
       self.warp_field = self.warp_field_cls()
@@ -339,7 +348,7 @@ class NerfModel(nn.Module):
         nerf_embed = metadata[self.nerf_embed_key]
         nerf_embed = self.nerf_embed(nerf_embed)
         if self.use_fusion:
-          nerf_embed = self.nerf_embd_fuser(nerf_embed)
+          nerf_embed = self.nerf_embd_fuser(nerf_embed, metadata['encoded_nerf']) # ASSUME NEVER CALLED
       if self.use_alpha_condition:
         alpha_conditions.append(nerf_embed)
       if self.use_rgb_condition:
@@ -490,9 +499,10 @@ class NerfModel(nn.Module):
                      metadata_encoded=False,
                      return_warp_jacobian=False,
                      use_sample_at_infinity=False,
-                     render_opts=None):
+                     render_opts=None,
+                     do_query=True):
     out = {'points': points}
-
+    warp_embed_cond = None
     batch_shape = points.shape[:-1]
     # Create the warp embedding.
     if use_warp:
@@ -500,12 +510,12 @@ class NerfModel(nn.Module):
         warp_embed = metadata['encoded_warp']
       else:
         warp_embed = metadata[self.warp_embed_key]
-        warp_embed = self.warp_embed(warp_embed)
+        if do_query:
+          warp_embed, warp_embed_cond = self.warp_embed(warp_embed, do_query)
+        else:
+          warp_embed = self.warp_embed(warp_embed)
     else:
       warp_embed = None
-    
-
-    # TODO: add relational embedding module
 
     # Create the hyper embedding.
     if self.has_hyper_embed:
@@ -521,10 +531,10 @@ class NerfModel(nn.Module):
     
     if self.use_fusion:
       if warp_embed is not None:
-        warp_embed = self.warp_fuser(warp_embed)
+        warp_embed = self.warp_fuser(warp_embed, warp_embed_cond, do_query)
       
       if hyper_embed is not None:
-        hyper_embed = self.hyper_fuser(hyper_embed)
+        hyper_embed = self.hyper_fuser(hyper_embed, warp_embed_cond, do_query)
 
     # Broadcast embeddings.
     if warp_embed is not None:
@@ -588,6 +598,7 @@ class NerfModel(nn.Module):
       use_sample_at_infinity=None,
       render_opts=None,
       deterministic=False,
+      do_query=False
   ):
     """Nerf Model.
 
@@ -646,7 +657,8 @@ class NerfModel(nn.Module):
         use_warp=use_warp,
         metadata_encoded=metadata_encoded,
         return_warp_jacobian=return_warp_jacobian,
-        use_sample_at_infinity=self.use_sample_at_infinity)
+        use_sample_at_infinity=self.use_sample_at_infinity,
+        do_query=do_query)
     out = {'coarse': coarse_ret}
 
     # Evaluate fine samples.
@@ -668,7 +680,8 @@ class NerfModel(nn.Module):
           metadata_encoded=metadata_encoded,
           return_warp_jacobian=return_warp_jacobian,
           use_sample_at_infinity=use_sample_at_infinity,
-          render_opts=render_opts)
+          render_opts=render_opts,
+          do_query=do_query)
 
     if not return_weights:
       del out['coarse']['weights']
@@ -726,6 +739,6 @@ def construct_nerf(key, batch_size: int, embeddings_dict: Dict[str, int],
       'params': key,
       'coarse': key1,
       'fine': key2
-  }, init_rays_dict, extra_params=extra_params)['params']
+  }, init_rays_dict, extra_params=extra_params, do_query=True)['params']
 
   return model, params

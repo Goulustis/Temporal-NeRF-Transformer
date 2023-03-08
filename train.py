@@ -41,6 +41,9 @@ from hypernerf import schedules
 from hypernerf import training
 from hypernerf import utils
 
+from jax.config import config
+config.update("jax_debug_nans", True)
+
 # from jax.config import config
 # config.update("jax_debug_nans", True)
 
@@ -193,7 +196,8 @@ def main(argv):
           dummy_model.nerf_embed_key == 'appearance'
           or dummy_model.hyper_embed_key == 'appearance'),
       use_camera_id=dummy_model.nerf_embed_key == 'camera',
-      use_time=dummy_model.warp_embed_key == 'time')
+      use_time=dummy_model.warp_embed_key == 'time',
+      query_frac=train_config.query_frac)
 
   # Create Jax iterator.
   logging.info('Creating dataset iterator.')
@@ -207,9 +211,7 @@ def main(argv):
       devices=devices,
   )
 
-  batch = next(train_iter)
   # Create Model.
-
   rng = random.PRNGKey(exp_config.random_seed)
   # Shift the numpy random seed by process_index() to shuffle data loaded by
   # different processes.
@@ -268,8 +270,9 @@ def main(argv):
       warp_reg_loss_scale=train_config.warp_reg_loss_scale,
       background_loss_weight=train_config.background_loss_weight,
       hyper_reg_loss_weight=train_config.hyper_reg_loss_weight,
-      rgb_weight=train_config.rgb_weight,
-      near_const_weight=train_config.near_loss_weight)
+      rgb_loss_weight=train_config.rgb_loss_weight,
+      near_const_weight=train_config.near_loss_weight,
+      query_loss_weight=train_config.query_loss_weight)
   state = checkpoints.restore_checkpoint(checkpoint_dir, state)
   init_step = state.optimizer.state.step + 1
   state = jax_utils.replicate(state, devices=devices)

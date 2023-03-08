@@ -234,7 +234,7 @@ class PadEmbed(GLOEmbed):
 
   def setup(self):
     assert self.n_emb_per_frame%2 == 1, "frame latent will not be at center"
-    n_embd = (self.n_emb_per_frame//2)*2 + self.num_embeddings + 2  
+    n_embd = (self.n_emb_per_frame//2)*2 + self.num_embeddings + 3  
     self.embed = nn.Embed(
         num_embeddings=n_embd,
         features=self.num_dims,
@@ -301,19 +301,22 @@ class PadEmbed(GLOEmbed):
     
     # make sure minimum is at least 1
     msk_min = msk_inputs.min(axis= 1, keepdims=True)
-    inval_cond = (msk_min <= 0).squeeze()
-    msk_inputs = msk_inputs.at[inval_cond].set(msk_inputs[inval_cond] - msk_min[inval_cond] + 1)
+    inval_cond = (msk_min <= 0) #.squeeze()
+    # msk_inputs = msk_inputs.at[inval_cond].set(msk_inputs[inval_cond] - msk_min[inval_cond] + 1)
+    msk_inputs = jnp.where(inval_cond, msk_inputs - msk_min + 1, msk_inputs)
+
     # msk_inputs[inval_cond] = msk_inputs[inval_cond] - msk_min[inval_cond] + 1
 
-    # msk_inputs[msk_inputs == inputs] = 0 # mask embd index
-    msk_inputs = msk_inputs.at[msk_inputs == inputs].set(0) # mask embd index
+    msk_cond = msk_inputs == inputs
+    # msk_inputs = msk_inputs.at[msk_cond].set(0) # mask embd index
+    msk_inputs = jnp.where(msk_cond, 0, msk_inputs)
 
     if msk_inputs.shape[-1] == 1:
       msk_inputs = jnp.squeeze(msk_inputs, axis=-1)
     
     embds = self.embed(msk_inputs) 
 
-    return embds
+    return embds, msk_cond
 
 
 @gin.configurable(denylist=['name'])
@@ -392,7 +395,7 @@ class TransformerFuser(nn.Module):
                                               dropout_prob=self.dropout_prob)
 
 
-    def __call__(self, x, metadata, do_query=False, mask=None, add_positional_encoding=True, train=True):
+    def __call__(self, x, select_msk = None, do_query=False, mask=None, add_positional_encoding=True, train=True):
         """
         Inputs:
             x - Input features of shape [Batch, SeqLen, input_dim]
@@ -407,13 +410,16 @@ class TransformerFuser(nn.Module):
             x = self.positional_encoding(x)
         x = self.transformer(x, mask=mask, train=train)
 
-        if (metadata is None) or (not do_query):
+        if (select_msk is None) or (not do_query):
           # return the center one
           latent_idx = x.shape[-2]//2
           return x[:, latent_idx]
         else:
           # return the ones enlisted by metadata
-          pass
+          # return x[select_msk]
+          d1_idx = jnp.arange(len(x))
+          d2_idx = select_msk.argmax(axis=1)
+          return x[d1_idx, d2_idx]
 
     def get_attention_maps(self, x, mask=None, add_positional_encoding=True, train=True):
         """
