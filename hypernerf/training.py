@@ -367,7 +367,7 @@ def train_step(model: models.NerfModel,
 
     if (query_batch is not None):
       query_ret = model.apply({'params': params['model']},
-                        rgb_batch,
+                        query_batch,
                         extra_params=state.extra_params,
                         return_points=(use_warp_reg_loss or use_hyper_reg_loss),
                         return_weights=(use_warp_reg_loss or use_elastic_loss),
