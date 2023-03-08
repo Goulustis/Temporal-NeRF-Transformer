@@ -41,11 +41,6 @@ from hypernerf import schedules
 from hypernerf import training
 from hypernerf import utils
 
-from jax.config import config
-config.update("jax_debug_nans", True)
-
-# from jax.config import config
-# config.update("jax_debug_nans", True)
 
 flags.DEFINE_enum('mode', None, ['jax_cpu', 'jax_gpu', 'jax_tpu'],
                   'Distributed strategy approach.')
@@ -135,6 +130,7 @@ def _log_grads(writer: tensorboard.SummaryWriter, model: models.NerfModel,
 
 
 def main(argv):
+  is_debug = False
   jax.config.parse_flags_with_absl()
   tf.config.experimental.set_visible_devices([], 'GPU')
   del argv
@@ -212,6 +208,7 @@ def main(argv):
   )
 
   # Create Model.
+  # rng = random.PRNGKey(exp_config.random_seed)
   rng = random.PRNGKey(exp_config.random_seed)
   # Shift the numpy random seed by process_index() to shuffle data loaded by
   # different processes.
@@ -298,23 +295,26 @@ def main(argv):
       use_hyper_reg_loss=train_config.use_hyper_reg_loss,
       enforce_near=train_config.enforce_near
   )
-  ptrain_step = jax.pmap(
-      train_step,
-      axis_name='batch',
-      devices=devices,
-      # rng_key, state, batch, scalar_params.
-      in_axes=(0, 0, 0, None),
-      # Treat use_elastic_loss as compile-time static.
-      donate_argnums=(2,),  # Donate the 'batch' argument.
-  )
-  # ptrain_step = jax.vmap(
-  #     train_step,
-  #     axis_name='batch',
-  #     # rng_key, state, batch, scalar_params.
-  #     in_axes=(0, 0, 0, None),
-  #     # Treat use_elastic_loss as compile-time static.
-  #     # donate_argnums=(2,),  # Donate the 'batch' argument.
-  # )
+
+  if not is_debug:
+    ptrain_step = jax.pmap(
+        train_step,
+        axis_name='batch',
+        devices=devices,
+        # rng_key, state, batch, scalar_params.
+        in_axes=(0, 0, 0, None),
+        # Treat use_elastic_loss as compile-time static.
+        donate_argnums=(2,),  # Donate the 'batch' argument.
+    )
+  else:
+    ptrain_step = jax.vmap(
+        train_step,
+        axis_name='batch',
+        # rng_key, state, batch, scalar_params.
+        in_axes=(0, 0, 0, None),
+        # Treat use_elastic_loss as compile-time static.
+        # donate_argnums=(2,),  # Donate the 'batch' argument.
+    )
 
   if devices:
     n_local_devices = len(devices)
@@ -350,11 +350,18 @@ def main(argv):
                           warp_alpha=warp_alpha,
                           hyper_alpha=hyper_alpha,
                           hyper_sheet_alpha=hyper_sheet_alpha)
-    # with jax.disable_jit():
-    with time_tracker.record_time('train_step'):
-      state, stats, keys, model_out = ptrain_step(
-          keys, state, batch, scalar_params)
-      time_tracker.toc('total')
+    
+    if is_debug:
+      with jax.disable_jit():
+        with time_tracker.record_time('train_step'):
+          state, stats, keys, model_out = ptrain_step(
+              keys, state, batch, scalar_params)
+          time_tracker.toc('total')
+    else:
+      with time_tracker.record_time('train_step'):
+        state, stats, keys, model_out = ptrain_step(
+            keys, state, batch, scalar_params)
+        time_tracker.toc('total')
 
     if step % train_config.print_every == 0 and jax.process_index() == 0:
       logging.info('step=%d, nerf_alpha=%.04f, warp_alpha=%.04f, %s', step,
