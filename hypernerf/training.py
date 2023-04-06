@@ -338,23 +338,13 @@ def train_step(model: models.NerfModel,
 
   def _loss_fn(params):
     latents = None
-    query_ret = None
+    ret = query_ret = {"fine":{"None" : None},
+                      "coarse":{"None" : None}}
     rgb_batch, query_batch = batch.get("rgb_batch"), batch.get("query_batch")
-    if enforce_near:
-      ret, feat = model.apply({'params': params['model']},
-                      rgb_batch,
-                      extra_params=state.extra_params,
-                      return_points=(use_warp_reg_loss or use_hyper_reg_loss),
-                      return_weights=(use_warp_reg_loss or use_elastic_loss),
-                      return_warp_jacobian=use_elastic_loss,
-                      rngs={
-                          'fine': fine_key,
-                          'coarse': coarse_key
-                      },
-                      mutable="intermediates")
-      latents = feat["intermediates"]["warp_embed"]["latents"]
-    else:
-      ret = model.apply({'params': params['model']},
+
+    if (rgb_batch is not None):
+      if enforce_near:
+        ret, feat = model.apply({'params': params['model']},
                         rgb_batch,
                         extra_params=state.extra_params,
                         return_points=(use_warp_reg_loss or use_hyper_reg_loss),
@@ -363,7 +353,20 @@ def train_step(model: models.NerfModel,
                         rngs={
                             'fine': fine_key,
                             'coarse': coarse_key
-                        })
+                        },
+                        mutable="intermediates")
+        latents = feat["intermediates"]["warp_embed"]["latents"]
+      else:
+        ret = model.apply({'params': params['model']},
+                          rgb_batch,
+                          extra_params=state.extra_params,
+                          return_points=(use_warp_reg_loss or use_hyper_reg_loss),
+                          return_weights=(use_warp_reg_loss or use_elastic_loss),
+                          return_warp_jacobian=use_elastic_loss,
+                          rngs={
+                              'fine': fine_key,
+                              'coarse': coarse_key
+                          })
 
     if (query_batch is not None):
       query_ret = model.apply({'params': params['model']},
