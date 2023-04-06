@@ -149,7 +149,6 @@ class ColcamDataSource(NerfiesDataSource):
 
         return ColcamDataset(data_dict, shuffle=shuffle, flatten=flatten)
 
-    
     def iterator_from_dataset(self, 
                           dataset,
                           batch_size: int,
@@ -164,20 +163,47 @@ class ColcamDataSource(NerfiesDataSource):
                         shuffle=False,
                         collate_fn = utils.tree_collate)
 
-        # def _prepare_data_batched(xs):
-        #     devices = jax.local_devices()
-        #     _prepare = lambda x : x.reshape((len(devices), -1) + x.shape[1:])
+        def _prepare_data_batched(xs):
+            data_batch = {}
+            devices = jax.local_devices()
+            _prepare = lambda x : x.reshape((len(devices), -1) + x.shape[1:])
 
-        #     return jax.tree_map(_prepare, xs)
+            data_batch["rgb_batch"] = xs
+
+            return jax.tree_map(_prepare, data_batch)
         
-        # def _prepare_data_unbatched(xs):
-        #     _prepare = lambda x : np.squeeze(x, axis=0)
-        #     return jax.tree_map(_prepare, xs)
+        def _prepare_data_unbatched(xs):
+            _prepare = lambda x : np.squeeze(x, axis=0)
+            return jax.tree_map(_prepare, xs)
 
-        # if batch_size > 0:
-        #     it = map(_prepare_data_batched, it)
-        # else:
-        #     it = map(_prepare_data_unbatched, it)
+        if batch_size > 0:
+            it = map(_prepare_data_batched, it)
+        else:
+            it = map(_prepare_data_unbatched, it)
+            
+        if prefetch_size > 0:
+            it = jax_utils.prefetch_to_device(it, prefetch_size, devices)
+        
+        return it
+
+@gin.configurable
+class QueryDataSource(ColcamDataSource):
+
+    def iterator_from_dataset(self, 
+                        dataset,
+                        batch_size: int,
+                        repeat: bool = True,
+                        prefetch_size: int = 0,
+                        devices= None,
+                        test=False):
+    
+
+        # shuffle takes too long in dataloader, will random sample in dataset instead
+        it = DataLoader(dataset, 
+                        batch_size=max(1, batch_size), 
+                        shuffle=False,
+                        collate_fn = utils.tree_collate)
+
 
         n_query = int(batch_size * self.query_frac)
         def _prepare_data(xs):
@@ -189,14 +215,15 @@ class ColcamDataSource(NerfiesDataSource):
                 _prepare = lambda x : np.squeeze(x, axis=0)
             
             data_batch = {}
-            if self.query_frac > 0:
+            if self.query_frac > 0 and batch_size > 0:
                 data_batch["rgb_batch"] = jax.tree_map(lambda x : x[n_query:], xs)
                 data_batch["query_batch"] = jax.tree_map(lambda x : x[:n_query], xs)
                 if xs.get("background_points") is not None:
                     data_batch["background_points"] = xs["background_points"]
-            else:
+            elif batch_size > 0:
                 data_batch["rgb_batch"] = xs
-            
+            else:
+                data_batch = xs
 
             return jax.tree_map(_prepare, data_batch)
 
