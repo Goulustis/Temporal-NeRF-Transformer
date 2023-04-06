@@ -47,6 +47,9 @@ from hypernerf import types
 from hypernerf import utils
 from hypernerf import visualization as viz
 
+import os.path as osp
+import json
+
 flags.DEFINE_enum('mode', None, ['jax_cpu', 'jax_gpu', 'jax_tpu'],
                   'Distributed strategy approach.')
 
@@ -101,7 +104,7 @@ def compute_stats(batch, model_out):
         '\tMetrics: mse=%.04f, psnr=%.02f, ssim=%.02f, ms_ssim=%.02f',
         mse, psnr, ssim, ms_ssim)
 
-  stats = jax.tree_map(np.array, stats)
+  stats = jax.tree_map(lambda x : np.array(x).item(), stats)
 
   return stats
 
@@ -266,6 +269,25 @@ def process_iterator(tag: str,
       summary_writer.scalar(tag=f'metrics-eval/{meter_name}/{tag}',
                             value=meter.reduce('mean'),
                             step=step)
+      
+    write_metrics(save_dir, meters)
+
+
+def write_metrics(save_dir, meters):
+  metric_means = {}
+  metric_vals = {}
+  for name, meter in meters.items():
+    metric_vals[name] = meter._values
+    metric_means[name] = meter.reduce('mean')
+
+  targ_mean = osp.join(save_dir, "metric_means.json")
+  targ_vals = osp.join(save_dir, "metric_values.json")
+
+  with open(targ_mean, "w") as f:
+    json.dump(metric_means, f, indent=2)
+  
+  with open(targ_vals, "w") as f:
+    json.dump(metric_vals, f, indent=2)
 
 
 def delete_old_renders(render_dir, max_renders):
@@ -442,30 +464,30 @@ def main(argv):
           datasource=datasource,
           model=model)
 
-    process_iterator(tag='train',
-                     item_ids=train_eval_ids,
-                     iterator=train_eval_iter,
-                     state=state,
-                     rng=rng,
-                     step=step,
-                     render_fn=render_fn,
-                     summary_writer=summary_writer,
-                     save_dir=save_dir,
-                     datasource=datasource,
-                     model=model)
+    # process_iterator(tag='train',
+    #                  item_ids=train_eval_ids,
+    #                  iterator=train_eval_iter,
+    #                  state=state,
+    #                  rng=rng,
+    #                  step=step,
+    #                  render_fn=render_fn,
+    #                  summary_writer=summary_writer,
+    #                  save_dir=save_dir,
+    #                  datasource=datasource,
+    #                  model=model)
 
-    if test_eval_iter:
-      process_iterator(tag='test',
-                       item_ids=test_eval_ids,
-                       iterator=test_eval_iter,
-                       state=state,
-                       rng=rng,
-                       step=step,
-                       render_fn=render_fn,
-                       summary_writer=summary_writer,
-                       save_dir=save_dir,
-                       datasource=datasource,
-                       model=model)
+    # if test_eval_iter:
+    #   process_iterator(tag='test',
+    #                    item_ids=test_eval_ids,
+    #                    iterator=test_eval_iter,
+    #                    state=state,
+    #                    rng=rng,
+    #                    step=step,
+    #                    render_fn=render_fn,
+    #                    summary_writer=summary_writer,
+    #                    save_dir=save_dir,
+    #                    datasource=datasource,
+    #                    model=model)
 
     if save_dir:
       delete_old_renders(renders_dir, eval_config.max_render_checkpoints)
