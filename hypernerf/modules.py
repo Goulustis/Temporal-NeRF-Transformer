@@ -199,7 +199,7 @@ class GLOEmbed(nn.Module):
 
   num_embeddings: int = gin.REQUIRED
   num_dims: int = gin.REQUIRED
-  embedding_init: types.Activation = nn.initializers.uniform(scale=0.05)
+  embedding_init: types.Activation = nn.initializers.uniform(scale=0.05) # try unit gaussian
 
   def setup(self):
     self.embed = nn.Embed(
@@ -207,7 +207,7 @@ class GLOEmbed(nn.Module):
         features=self.num_dims,
         embedding_init=self.embedding_init)
 
-  def __call__(self, inputs: jnp.ndarray) -> jnp.ndarray:
+  def __call__(self, inputs: jnp.ndarray, do_query: bool = False) -> jnp.ndarray:
     """Method to get embeddings for specified indices.
 
     Args:
@@ -384,7 +384,7 @@ class TransformerFuser(nn.Module):
     def setup(self):
         # Input dim -> Model dim
         self.input_dropout = nn.Dropout(self.input_dropout_prob)
-        # self.input_layer = nn.Dense(self.model_dim)
+        self.input_layer = nn.Dense(self.model_dim)
         # Positional encoding for sequences
         self.positional_encoding = PositionalEncoding(self.model_dim)
         # Transformer
@@ -394,6 +394,7 @@ class TransformerFuser(nn.Module):
                                               num_heads=self.num_heads,
                                               dropout_prob=self.dropout_prob)
 
+        self.output_layer = nn.Dense(self.model_dim)
 
     def __call__(self, x, select_msk = None, do_query=False, mask=None, add_positional_encoding=True, train=True):
         """
@@ -404,8 +405,13 @@ class TransformerFuser(nn.Module):
                                       Might not be desired for some tasks.
             train - If True, dropout is stochastic
         """
+        dim_shape = x.shape[:-2]
+        opt_shape = [-1] + list(x.shape[-2:])
+        ret_shape = list(dim_shape) + [self.model_dim]
+        x = x.reshape(opt_shape)
+
         x = self.input_dropout(x, deterministic=not train)
-        # x = self.input_layer(x)
+        x = self.input_layer(x)
         if add_positional_encoding:
             x = self.positional_encoding(x)
         x = self.transformer(x, mask=mask, train=train)
@@ -413,13 +419,15 @@ class TransformerFuser(nn.Module):
         if (select_msk is None) or (not do_query):
           # return the center one
           latent_idx = x.shape[-2]//2
-          return x[:, latent_idx]
+          x = x[:, latent_idx]
         else:
           # return the ones enlisted by metadata
-          # return x[select_msk]
           d1_idx = jnp.arange(len(x))
           d2_idx = select_msk.argmax(axis=1)
-          return x[d1_idx, d2_idx]
+          x = x[d1_idx, d2_idx]
+        
+        x = self.output_layer(x)
+        return x.reshape(ret_shape)
 
     def get_attention_maps(self, x, mask=None, add_positional_encoding=True, train=True):
         """
