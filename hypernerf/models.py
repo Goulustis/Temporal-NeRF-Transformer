@@ -500,7 +500,7 @@ class NerfModel(nn.Module):
                      return_warp_jacobian=False,
                      use_sample_at_infinity=False,
                      render_opts=None,
-                     do_query=True):
+                     do_query=False):
     out = {'points': points}
     warp_embed_cond = None
     batch_shape = points.shape[:-1]
@@ -529,7 +529,7 @@ class NerfModel(nn.Module):
     else:
       hyper_embed = None
     
-    if self.use_fusion:
+    if self.use_fusion and (not metadata_encoded):
       if warp_embed is not None:
         warp_embed = self.warp_fuser(warp_embed, warp_embed_cond, do_query)
       
@@ -739,6 +739,6 @@ def construct_nerf(key, batch_size: int, embeddings_dict: Dict[str, int],
       'params': key,
       'coarse': key1,
       'fine': key2
-  }, init_rays_dict, extra_params=extra_params, do_query=True)['params']
+  }, init_rays_dict, extra_params=extra_params)['params']
 
   return model, params
