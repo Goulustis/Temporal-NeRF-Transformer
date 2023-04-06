@@ -132,6 +132,6 @@ class PositionalEncoding(nn.Module):
         self.pe = jax.device_put(pe)
 
     def __call__(self, x):
-        x = x + self.pe[:, :x.shape[1]]
+        x = x + self.pe[:, :x.shape[-2]]
         return x
 
