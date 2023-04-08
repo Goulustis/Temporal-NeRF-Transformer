@@ -232,22 +232,22 @@ class NerfModel(nn.Module):
     else:
       return embed_fn(embed, **kwargs)
 
-  def encode_hyper_embed(self, metadata):
+  def encode_hyper_embed(self, metadata, **kwargs):
     if self.hyper_slice_method == 'axis_aligned_plane':
       if self.hyper_use_warp_embed:
         hyper_emb= self._encode_embed(metadata[self.warp_embed_key],
-                                  self.warp_embed)
+                                  self.warp_embed, **kwargs)
       else:
         hyper_emb = self._encode_embed(metadata[self.hyper_embed_key],
-                                  self.hyper_embed)
+                                  self.hyper_embed, **kwargs)
     elif self.hyper_slice_method == 'bendy_sheet':
       # The bendy sheet shares the metadata of the warp.
       if self.hyper_use_warp_embed:
         hyper_emb = self._encode_embed(metadata[self.warp_embed_key],
-                                  self.warp_embed)
+                                  self.warp_embed, **kwargs)
       else:
         hyper_emb = self._encode_embed(metadata[self.hyper_embed_key],
-                                  self.hyper_embed)
+                                  self.hyper_embed,**kwargs)
     else:
       raise RuntimeError(
           f'Unknown hyper slice method {self.hyper_slice_method}.')
