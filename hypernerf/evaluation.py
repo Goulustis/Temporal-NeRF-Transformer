@@ -43,10 +43,10 @@ def encode_metadata(model, params, metadata):
         {'params': params}, metadata, method=model.encode_nerf_embed)
   if model.use_warp:
     encoded_metadata['encoded_warp'] = model.apply(
-        {'params': params}, metadata, method=model.encode_warp_embed)
+        {'params': params}, metadata, **{"do_query":True, "is_eval":True}, method=model.encode_warp_embed)
   if model.has_hyper_embed:
     encoded_metadata['encoded_hyper'] = model.apply(
-        {'params': params}, metadata, method=model.encode_hyper_embed)
+        {'params': params}, metadata, **{"do_query":True, "is_eval":True}, method=model.encode_hyper_embed)
   return encoded_metadata
 
 

@@ -243,14 +243,14 @@ class PadEmbed(GLOEmbed):
     self.index_shift = self.n_emb_per_frame//2 + 2 # add extra 1 so index = 0 is mask token
     self.n_embd = n_embd
 
-  def __call__(self, inputs: jnp.ndarray, do_query:bool =False) -> jnp.ndarray:
+  def __call__(self, inputs: jnp.ndarray, do_query:bool =False, is_eval=False) -> jnp.ndarray:
     
-    if do_query:
+    if do_query and (not is_eval):
       return self.query_mask(inputs)
     else:
-      return self.get_embd(inputs)
+      return self.get_embd(inputs, do_query)
 
-  def get_embd(self, inputs):
+  def get_embd(self, inputs, do_query=False):
     """Method to get embeddings for specified indices.
 
     Args:
@@ -268,14 +268,17 @@ class PadEmbed(GLOEmbed):
                                  self.n_emb_per_frame//2).reshape(*add_dims, -1)
     inputs = inputs + shift_seq
 
-    # assert not (0 in inputs).all(), "mask should not be in call, fix the indexing!!"
+    if do_query:
+      # inputs[..., self.n_emb_per_frame//2] = 0
+      inputs = inputs.at[..., self.n_emb_per_frame//2].set(0)
+
     if inputs.shape[-1] == 1:
       inputs = jnp.squeeze(inputs, axis=-1)
     
     embds = self.embed(inputs) 
     self.sow("intermediates", "latents", embds)
 
-    return embds
+    return embds  # eval out shape: (480, 268, 7, 32)
 
 
   def query_mask(self, inputs:jnp.ndarray) -> jnp.ndarray:

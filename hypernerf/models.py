@@ -208,7 +208,7 @@ class NerfModel(nn.Module):
     return self.has_hyper_embed or self.use_warp or self.use_nerf_embed
 
   @staticmethod
-  def _encode_embed(embed, embed_fn):
+  def _encode_embed(embed, embed_fn, **kwargs):
     """Encodes embeddings.
 
     If the channel size 1, it is just a single metadata ID.
@@ -226,11 +226,11 @@ class NerfModel(nn.Module):
     """
     if embed.shape[-1] == 3:
       left, right, progression = jnp.split(embed, 3, axis=-1)
-      left = embed_fn(left.astype(jnp.uint32))
-      right = embed_fn(right.astype(jnp.uint32))
+      left = embed_fn(left.astype(jnp.uint32), **kwargs)
+      right = embed_fn(right.astype(jnp.uint32), **kwargs)
       return (1.0 - progression) * left + progression * right
     else:
-      return embed_fn(embed)
+      return embed_fn(embed, **kwargs)
 
   def encode_hyper_embed(self, metadata):
     if self.hyper_slice_method == 'axis_aligned_plane':
@@ -264,8 +264,8 @@ class NerfModel(nn.Module):
     
     return nerf_embd
 
-  def encode_warp_embed(self, metadata):
-    warp_embd = self._encode_embed(metadata[self.warp_embed_key], self.warp_embed)
+  def encode_warp_embed(self, metadata, **kwargs):
+    warp_embd = self._encode_embed(metadata[self.warp_embed_key], self.warp_embed, **kwargs)
     if self.use_fusion:
       warp_embd = self.warp_fuser(warp_embd)
     return warp_embd
