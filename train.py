@@ -51,6 +51,8 @@ flags.DEFINE_multi_string('gin_bindings', None, 'Gin parameter bindings.')
 flags.DEFINE_multi_string('gin_configs', (), 'Gin config files.')
 FLAGS = flags.FLAGS
 
+# from jax.config import config
+# config.update("jax_debug_nans", True)
 
 def _log_to_tensorboard(writer: tensorboard.SummaryWriter,
                         state: model_utils.TrainState,
@@ -377,7 +379,7 @@ def main(argv):
         logging.info('\tfine metrics: %s', fine_metrics_str)
 
     if step % train_config.save_every == 0 and jax.process_index() == 0:
-      training.save_checkpoint(checkpoint_dir, state, keep=2)
+      training.save_checkpoint(checkpoint_dir, state, keep=50)
 
     if step % train_config.log_every == 0 and jax.process_index() == 0:
       # Only log via process 0.
