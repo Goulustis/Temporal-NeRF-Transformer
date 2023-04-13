@@ -234,7 +234,7 @@ class PadEmbed(GLOEmbed):
 
   def setup(self):
     assert self.n_emb_per_frame%2 == 1, "frame latent will not be at center"
-    n_embd = (self.n_emb_per_frame//2)*2 + self.num_embeddings + 3  
+    n_embd = (self.n_emb_per_frame//2)*2 + self.num_embeddings + self.n_emb_per_frame//2  
     self.embed = nn.Embed(
         num_embeddings=n_embd,
         features=self.num_dims,
